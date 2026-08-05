@@ -286,11 +286,11 @@ install_pynacl() {
   print_info "PyNaCl not installed; attempting to install it..."
   if ensure_pip; then
     if python3 -m pip install --user --upgrade pip setuptools wheel >/dev/null 2>&1; then
-      if python3 -m pip install --user pynacl >/dev/null 2>&1; then
+      if python3 -m pip install --user --break-system-packages pynacl >/dev/null 2>&1; then
         return 0
       fi
     fi
-    if command -v pip3 >/dev/null 2>&1 && pip3 install --user pynacl >/dev/null 2>&1; then
+    if command -v pip3 >/dev/null 2>&1 && pip3 install --user --break-system-packages pynacl >/dev/null 2>&1; then
       return 0
     fi
   fi
@@ -303,7 +303,7 @@ install_pynacl() {
 
   if command -v sudo >/dev/null 2>&1; then
     print_info "Attempting system-wide PyNaCl install with sudo..."
-    if sudo python3 -m pip install pynacl >/dev/null 2>&1; then
+    if sudo python3 -m pip install --break-system-packages pynacl >/dev/null 2>&1; then
       return 0
     fi
     if command -v apt-get >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-nacl >/dev/null 2>&1; then
