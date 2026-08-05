@@ -1,0 +1,85 @@
+# =============================================================================
+# kubernetes/03-frontend.yaml
+#
+# OPTIONAL "Level 2" manifest. Image is a placeholder - scripts/k8s-deploy.sh
+# replaces IMAGE_PLACEHOLDER_FRONTEND with your real ECR image URI.
+#
+# KodeKloud EKS caps: max 256m CPU / 512Mi memory PER POD, and max 3 pods per
+# namespace total (postgres + backend + frontend = exactly 3 with 1 replica
+# each) - see docs/03-kodekloud-aws-playground-limits.md.
+#
+# Service type LoadBalancer provisions a real AWS Elastic Load Balancer -
+# this incurs its own small hourly cost on top of the EKS cluster and nodes.
+# Tear it down with scripts/k8s-destroy.sh as soon as you're done.
+#
+# IMPORTANT: the annotation below forces a Network Load Balancer (NLB) via
+# the ELBv2 API. Without it, Kubernetes' built-in AWS controller defaults to
+# a CLASSIC Load Balancer (the old ELB API) - and the KodeKloud AWS
+# Playground has an explicit deny on creating Classic Load Balancers
+# (confirmed by KodeKloud staff on their community forum), while NLB/ALB
+# creation is allowed. Without this annotation, `kubectl get svc
+# thermos-frontend` sits at EXTERNAL-IP: <pending> forever, with no error
+# ever surfaced to `terraform apply` or `kubectl apply` - the deny happens
+# silently, deep inside AWS's own Service reconciler. See
+# docs/03-kodekloud-aws-playground-limits.md for the full story.
+#
+# HEALTH CHECK ANNOTATIONS: The NLB health check annotations below tell AWS
+# to wait longer before marking targets as unhealthy. Without these, the NLB
+# can give up on health checks before the frontend pod is fully ready,
+# causing the LoadBalancer to return no traffic even though the pod is fine.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thermos-frontend
+  labels:
+    app: thermos-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: thermos-frontend
+  template:
+    metadata:
+      labels:
+        app: thermos-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: IMAGE_PLACEHOLDER_FRONTEND
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"   # KodeKloud EKS cap: 256m CPU per pod
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thermos-frontend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # NLB health check tuning: give pods time to become ready before
+    # the NLB marks them unhealthy. Without these, the NLB's aggressive
+    # defaults can fail health checks during pod startup.
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "5"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+spec:
+  selector:
+    app: thermos-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer

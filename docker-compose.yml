@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: thermos-postgres
+    environment:
+      POSTGRES_USER: thermos
+      POSTGRES_PASSWORD: thermos
+      POSTGRES_DB: thermos
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thermos -d thermos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - thermos-net
+
+  backend:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile.dev
+    container_name: thermos-backend
+    environment:
+      DATABASE_URL: postgresql://thermos:thermos@postgres:5432/thermos
+      SECRET_KEY: dev-secret-key-local
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - thermos-net
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+    container_name: thermos-frontend
+    # NOTE: We do NOT set REACT_APP_API_URL here.
+    # The frontend defaults to relative '/api' URLs, and nginx.conf proxies
+    # /api to the backend. This works identically on localhost AND on AWS.
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - thermos-net
+
+volumes:
+  postgres_data:
+
+networks:
+  thermos-net:
+    driver: bridge

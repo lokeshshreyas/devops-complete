@@ -1,0 +1,73 @@
+# =============================================================================
+# kubernetes/02-backend.yaml
+#
+# OPTIONAL "Level 2" manifest. Image is a placeholder - scripts/k8s-deploy.sh
+# replaces IMAGE_PLACEHOLDER_BACKEND with your real ECR image URI before
+# applying this file (kubectl doesn't support env-var substitution natively).
+#
+# Service is named "thermos-backend" to exactly match nginx.conf's
+# proxy_pass http://thermos-backend:5000 - the same frontend Docker image
+# used in docker-compose.yml works here completely unchanged.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thermos-backend
+  labels:
+    app: thermos-backend
+spec:
+  # KodeKloud AWS Playground caps pods at 3 per namespace. Combined with
+  # postgres (1 replica) and frontend (1 replica) below, this stays exactly
+  # at that limit: 1 + 1 + 1 = 3 pods in the default namespace.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: thermos-backend
+  template:
+    metadata:
+      labels:
+        app: thermos-backend
+    spec:
+      containers:
+        - name: backend
+          image: IMAGE_PLACEHOLDER_BACKEND
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - secretRef:
+                name: thermos-secrets
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              # KodeKloud AWS Playground caps EKS pods at 256m CPU / 512Mi memory.
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thermos-backend
+spec:
+  selector:
+    app: thermos-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+  type: ClusterIP

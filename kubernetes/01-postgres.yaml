@@ -1,0 +1,81 @@
+# =============================================================================
+# kubernetes/01-postgres.yaml
+#
+# OPTIONAL "Level 2" manifest. Uses an emptyDir (not a PersistentVolumeClaim)
+# on purpose - installing the EBS CSI driver so PVCs work on EKS is an extra
+# setup step beyond this workshop's scope. That means data is lost if the
+# pod restarts, which is fine for a short KodeKloud learning session; see
+# docs/11-kubernetes-eks-optional.md for how you'd add real persistence.
+#
+# KodeKloud EKS pod caps: max 256m CPU / 512Mi memory PER POD, and max 3 pods
+# per namespace total across postgres+backend+frontend - see
+# docs/03-kodekloud-aws-playground-limits.md. This file plus 02-backend.yaml
+# and 03-frontend.yaml each run exactly 1 replica to stay at exactly 3 pods.
+#
+# Service is named "postgres" to exactly match DATABASE_URL in
+# 00-secrets.yaml (postgresql://thermos:thermos@postgres:5432/thermos) -
+# same hostname the app already uses in docker-compose.yml.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # avoid two Postgres pods writing to the same emptyDir-less state at once
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: thermos-secrets
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "thermos", "-d", "thermos"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "thermos", "-d", "thermos"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              # KodeKloud AWS Playground caps EKS pods at 256m CPU / 512Mi memory -
+              # kept well under both with margin to spare.
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pg-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP

@@ -1,0 +1,76 @@
+# =============================================================================
+# .github/workflows/ci.yml — CI (not CD): validates every push/PR
+#
+# Four independent, parallel jobs - no AWS credentials, no secrets required.
+# See docs/10-cicd-pipeline.md for what each one checks and why this is CI
+# only (no deployment). This is entirely optional Level 2 content; it has no
+# effect on the core KodeKloud workshop in RUNBOOK.md.
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate-terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [terraform-docker, terraform-docker/backend, terraform-eks]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: terraform init (no backend, no credentials needed)
+        working-directory: ${{ matrix.module }}
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: ${{ matrix.module }}
+        run: terraform validate
+
+  build-docker-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: docker compose config
+
+      - name: Build backend image
+        run: docker build -f src/backend/Dockerfile -t thermos-backend:ci src/backend
+
+      - name: Build frontend image
+        run: docker build -f src/frontend/Dockerfile -t thermos-frontend:ci src/frontend
+
+  lint-shell-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck on every script
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: './scripts'
+
+  validate-kubernetes-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate manifests with kubeconform
+        run: kubeconform -summary -ignore-missing-schemas kubernetes/*.yaml

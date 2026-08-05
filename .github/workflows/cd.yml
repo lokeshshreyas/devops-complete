@@ -1,0 +1,60 @@
+# =============================================================================
+# .github/workflows/cd.yml — CD (Continuous Deployment): OPTIONAL, opt-in
+#
+# Unlike ci.yml, this workflow DOES touch AWS and DOES require credentials.
+# It only runs after you've explicitly enabled it by running
+# ./scripts/advanced/06-setup-cicd.sh, which pushes this project to your own
+# GitHub repo and registers the AWS_* secrets this workflow reads.
+#
+# See docs/16-cicd-continuous-deployment.md for the full explanation,
+# including why these credentials are session-scoped and must be refreshed
+# each KodeKloud session.
+#
+# What it does: on every push to main that touches Terraform or Kubernetes
+# config, it runs scripts/advanced/07-cd-apply.sh, which reads
+# .thermos/active-stack to know whether to apply against the Docker/EC2
+# stack or the Kubernetes/EKS stack - whichever you actually deployed.
+# =============================================================================
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'terraform-docker/**'
+      - 'terraform-eks/**'
+      - 'kubernetes/**'
+      - 'src/**'
+      - '.thermos/active-stack'
+      - '.github/workflows/cd.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Configure AWS credentials (KodeKloud session - expires with the session)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
+          chmod +x /usr/local/bin/kubectl
+
+      - name: Apply changes to the active stack
+        run: |
+          chmod +x scripts/advanced/07-cd-apply.sh
+          ./scripts/advanced/07-cd-apply.sh
