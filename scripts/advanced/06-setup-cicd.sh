@@ -219,6 +219,9 @@ if [ -z "$AWS_SESSION_TOKEN_VAL" ]; then
   print_warn "KodeKloud Playground you almost always have one. Double-check 'aws configure list'."
 fi
 
+PYTHON_CMD="python3"
+VENV_DIR="${PROJECT_ROOT}/.venv-cicd"
+
 ensure_pip() {
   if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
     return 0
@@ -242,8 +245,23 @@ ensure_pip() {
   return 1
 }
 
+create_venv() {
+  if [ -d "$VENV_DIR" ]; then
+    PYTHON_CMD="$VENV_DIR/bin/python"
+    return 0
+  fi
+
+  if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
+    PYTHON_CMD="$VENV_DIR/bin/python"
+    "$PYTHON_CMD" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1
+    return 0
+  fi
+
+  return 1
+}
+
 install_pynacl() {
-  if python3 -c "import nacl.public" >/dev/null 2>&1; then
+  if $PYTHON_CMD -c "import nacl.public" >/dev/null 2>&1; then
     return 0
   fi
 
@@ -259,6 +277,12 @@ install_pynacl() {
     fi
   fi
 
+  if create_venv; then
+    if "$PYTHON_CMD" -m pip install pynacl >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
   if command -v sudo >/dev/null 2>&1; then
     print_info "Attempting system-wide PyNaCl install with sudo..."
     if sudo python3 -m pip install pynacl >/dev/null 2>&1; then
@@ -269,7 +293,7 @@ install_pynacl() {
     fi
   fi
 
-  if python3 -c "import nacl.public" >/dev/null 2>&1; then
+  if $PYTHON_CMD -c "import nacl.public" >/dev/null 2>&1; then
     return 0
   fi
 
@@ -307,8 +331,8 @@ set_secret() {
   local key_json key_id public_key
   key_json="$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/${OWNER_REPO}/actions/secrets/public-key")"
-  key_id="$(echo "$key_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['key_id'])" 2>/dev/null)"
-  public_key="$(echo "$key_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])" 2>/dev/null)"
+  key_id="$(echo "$key_json" | $PYTHON_CMD -c "import sys,json; print(json.load(sys.stdin)['key_id'])" 2>/dev/null)"
+  public_key="$(echo "$key_json" | $PYTHON_CMD -c "import sys,json; print(json.load(sys.stdin)['key'])" 2>/dev/null)"
 
   if [ -z "$key_id" ] || [ -z "$public_key" ]; then
     print_error "Could not fetch the repo's public key for ${name} - set it manually instead:"
@@ -319,7 +343,7 @@ set_secret() {
   fi
 
   local encrypted
-  encrypted="$(python3 - "$public_key" "$value" <<'PYEOF'
+  encrypted="$($PYTHON_CMD - "$public_key" "$value" <<'PYEOF'
 import sys, base64
 from nacl import encoding, public
 pub_key = public.PublicKey(sys.argv[1].encode("utf-8"), encoding.Base64Encoder())
