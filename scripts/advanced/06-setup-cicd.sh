@@ -219,26 +219,65 @@ if [ -z "$AWS_SESSION_TOKEN_VAL" ]; then
   print_warn "KodeKloud Playground you almost always have one. Double-check 'aws configure list'."
 fi
 
-ensure_pynacl() {
+ensure_pip() {
+  if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if python3 -m pip --version >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    print_info "pip not found; attempting to install python3-pip via apt-get..."
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if python3 -m ensurepip --upgrade >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+install_pynacl() {
   if python3 -c "import nacl.public" >/dev/null 2>&1; then
     return 0
   fi
 
   print_info "PyNaCl not installed; attempting to install it..."
-  if python3 -m pip install --user pynacl >/dev/null 2>&1; then
+  if ensure_pip; then
+    if python3 -m pip install --user --upgrade pip setuptools wheel >/dev/null 2>&1; then
+      if python3 -m pip install --user pynacl >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+    if command -v pip3 >/dev/null 2>&1 && pip3 install --user pynacl >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    print_info "Attempting system-wide PyNaCl install with sudo..."
+    if sudo python3 -m pip install pynacl >/dev/null 2>&1; then
+      return 0
+    fi
+    if command -v apt-get >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pynacl >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if python3 -c "import nacl.public" >/dev/null 2>&1; then
     return 0
   fi
-  if command -v sudo >/dev/null 2>&1 && python3 -m pip install pynacl >/dev/null 2>&1; then
-    return 0
-  fi
-  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1 && sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y python3-pynacl >/dev/null 2>&1; then
-    return 0
-  fi
+
   return 1
 }
 
 if [ "$GH_CLI_AVAILABLE" -eq 0 ]; then
-  if ! ensure_pynacl; then
+  if ! install_pynacl; then
     print_error "PyNaCl is not installed and could not be installed automatically."
     print_info "Install it manually and rerun this script:"
     print_info "  python3 -m pip install --user pynacl"
