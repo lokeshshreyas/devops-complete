@@ -118,9 +118,9 @@ const styles = {
     card: { background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' },
     cardTitle: { margin: '0 0 8px 0', fontSize: '16px' },
     cardDesc: { margin: '0 0 8px 0', color: '#666', fontSize: '13px' },
-    tag: { display: 'inline-block', background: '#e8eaf6', color: '#667eea', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', marginBottom: '8px' },
+    tag: { display: 'inline-block', background: '#e8f7f0', color: '#16a085', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', marginBottom: '8px' },
     actions: { display: 'flex', gap: '8px', marginTop: '8px' },
-    editBtn: { padding: '6px 12px', background: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
+    editBtn: { padding: '6px 12px', background: '#16a085', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
     delBtn: { padding: '6px 12px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
     empty: { textAlign: 'center', color: '#999', padding: '40px' }
 };
