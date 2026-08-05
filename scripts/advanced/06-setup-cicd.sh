@@ -245,6 +245,16 @@ ensure_pip() {
   return 1
 }
 
+install_venv_support() {
+  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    print_info "Installing python3-venv support so a virtual environment can be created..."
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 create_venv() {
   if [ -d "$VENV_DIR" ]; then
     PYTHON_CMD="$VENV_DIR/bin/python"
@@ -253,8 +263,16 @@ create_venv() {
 
   if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
     PYTHON_CMD="$VENV_DIR/bin/python"
-    "$PYTHON_CMD" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1
-    return 0
+    if "$PYTHON_CMD" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if install_venv_support && python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
+    PYTHON_CMD="$VENV_DIR/bin/python"
+    if "$PYTHON_CMD" -m pip install --upgrade pip setuptools wheel >/dev/null 2>&1; then
+      return 0
+    fi
   fi
 
   return 1
