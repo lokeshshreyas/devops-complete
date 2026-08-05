@@ -306,7 +306,7 @@ install_pynacl() {
     if sudo python3 -m pip install pynacl >/dev/null 2>&1; then
       return 0
     fi
-    if command -v apt-get >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pynacl >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-nacl >/dev/null 2>&1; then
       return 0
     fi
   fi
@@ -322,9 +322,11 @@ if [ "$GH_CLI_AVAILABLE" -eq 0 ]; then
   if ! install_pynacl; then
     print_error "PyNaCl is not installed and could not be installed automatically."
     print_info "Install it manually and rerun this script:"
+    print_info "  sudo apt-get update"
+    print_info "  sudo apt-get install -y python3-pip"
     print_info "  python3 -m pip install --user pynacl"
-    print_info "or"
-    print_info "  sudo apt-get install -y python3-pynacl"
+    print_info "or install GitHub CLI to bypass the PyNaCl requirement:"
+    print_info "  sudo apt-get install -y gh"
     unset GH_TOKEN AUTH_HEADER
     exit 1
   fi
