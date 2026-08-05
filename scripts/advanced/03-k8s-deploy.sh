@@ -55,20 +55,74 @@ for tool in terraform aws docker kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { print_error "$tool not found. See docs/11-kubernetes-eks-optional.md for what to install."; exit 1; }
 done
 
-if [ ! -f "${EKS_DIR}/terraform.tfstate" ]; then
-  print_error "EKS cluster not found. You MUST run ./scripts/advanced/02-eks-up.sh FIRST."
+DOCKER_CMD="docker"
+CURRENT_USER="$(id -un)"
+if ! docker info >/dev/null 2>&1; then
+  if getent group docker | grep -qw "${CURRENT_USER}"; then
+    if command -v newgrp >/dev/null 2>&1; then
+      print_info "Refreshing docker group membership for ${CURRENT_USER} without logout."
+      exec newgrp docker "$0" "$@"
+    fi
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    print_info "Adding ${CURRENT_USER} to the docker group and restarting Docker."
+    if sudo usermod -aG docker "${CURRENT_USER}" && sudo systemctl restart docker; then
+      if command -v newgrp >/dev/null 2>&1; then
+        print_info "User added to docker group and Docker restarted; re-running the script with refreshed group membership."
+        exec newgrp docker "$0" "$@"
+      fi
+    fi
+  fi
+
+  print_error "Permission denied while trying to connect to the Docker API."
+  print_info "Ensure your user has docker group access and then rerun this script."
+  print_info "Example: sudo usermod -aG docker ${CURRENT_USER}"
+  exit 1
+fi
+
+cd "$EKS_DIR"
+print_info "Initializing Terraform in ${EKS_DIR} to use the configured backend..."
+if ! terraform init -input=false >/dev/null 2>&1; then
+  print_error "Terraform init failed in ${EKS_DIR}. Ensure the S3 backend is configured and your AWS credentials are valid."
+  exit 1
+fi
+
+BACKEND_FILE="${EKS_DIR}/backend.tf"
+REMOTE_STATE_BUCKET=""
+REMOTE_STATE_KEY=""
+REMOTE_STATE_REGION=""
+if grep -Eq '^[[:space:]]*backend[[:space:]]+"s3"[[:space:]]*\{' "$BACKEND_FILE"; then
+  REMOTE_STATE_BUCKET="$(grep -E '^[[:space:]]*bucket[[:space:]]*=.*' "$BACKEND_FILE" | head -n 1 | sed -E 's/^[[:space:]]*bucket[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+  REMOTE_STATE_KEY="$(grep -E '^[[:space:]]*key[[:space:]]*=.*' "$BACKEND_FILE" | head -n 1 | sed -E 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+  REMOTE_STATE_REGION="$(grep -E '^[[:space:]]*region[[:space:]]*=.*' "$BACKEND_FILE" | head -n 1 | sed -E 's/^[[:space:]]*region[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+
+  if [ -n "$REMOTE_STATE_BUCKET" ] && [ -n "$REMOTE_STATE_KEY" ]; then
+    print_info "Checking remote Terraform state in S3: s3://${REMOTE_STATE_BUCKET}/${REMOTE_STATE_KEY}"
+    AWS_ARGS=()
+    if [ -n "$REMOTE_STATE_REGION" ]; then
+      AWS_ARGS+=(--region "$REMOTE_STATE_REGION")
+    fi
+    if ! aws s3api head-object "${AWS_ARGS[@]}" --bucket "$REMOTE_STATE_BUCKET" --key "$REMOTE_STATE_KEY" >/dev/null 2>&1; then
+      print_error "Terraform state file not found in S3 bucket: s3://${REMOTE_STATE_BUCKET}/${REMOTE_STATE_KEY}"
+      print_info "Make sure ./scripts/advanced/02-eks-up.sh has already created the cluster and remote state."
+      exit 1
+    fi
+  fi
+fi
+
+if ! CLUSTER_NAME="$(terraform output -raw cluster_name 2>/dev/null)"; then
+  print_error "EKS cluster not found in Terraform state. You MUST run ./scripts/advanced/02-eks-up.sh FIRST."
   print_info ""
   print_info "Correct order:"
   print_info "  1. ./scripts/advanced/02-eks-up.sh     # Creates cluster (~10-15 min)"
-  print_info "  2. ./scripts/advanced/03-k8s-deploy.sh # Deploys app (~5-10 min)"
+  print_info "  2. ./scripts/advanced/k8s-deploy.sh # Deploys app (~5-10 min)"
   print_info ""
   print_info "Only running terraform apply is NOT enough — it creates infrastructure"
   print_info "but does NOT deploy any application pods or LoadBalancer."
   exit 1
 fi
 
-cd "$EKS_DIR"
-CLUSTER_NAME="$(terraform output -raw cluster_name)"
 REGION="$(terraform output -raw configure_kubectl_command | sed -n 's/.*--region \(.*\)/\1/p')"
 ECR_BACKEND="$(terraform output -raw ecr_backend_url)"
 ECR_FRONTEND="$(terraform output -raw ecr_frontend_url)"
@@ -80,20 +134,20 @@ print_info "Cluster: $CLUSTER_NAME (region $REGION)"
 # =============================================================================
 print_header "Step 1/6: Building images    2-5 mins"
 cd "$PROJECT_ROOT"
-docker build -t thermos-backend:latest -f src/backend/Dockerfile src/backend
-docker build -t thermos-frontend:latest -f src/frontend/Dockerfile src/frontend
+${DOCKER_CMD} build -t thermos-backend:latest -f src/backend/Dockerfile src/backend
+${DOCKER_CMD} build -t thermos-frontend:latest -f src/frontend/Dockerfile src/frontend
 print_success "Images built"
 
 # =============================================================================
 # Step 2: Push to ECR
 # =============================================================================
 print_header "Step 2/6: Pushing images to ECR    1-3 mins"
-aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$(echo "$ECR_BACKEND" | cut -d/ -f1)"
+aws ecr get-login-password --region "$REGION" | ${DOCKER_CMD} login --username AWS --password-stdin "$(echo "$ECR_BACKEND" | cut -d/ -f1)"
 
-docker tag thermos-backend:latest "${ECR_BACKEND}:latest"
-docker tag thermos-frontend:latest "${ECR_FRONTEND}:latest"
-docker push "${ECR_BACKEND}:latest"
-docker push "${ECR_FRONTEND}:latest"
+${DOCKER_CMD} tag thermos-backend:latest "${ECR_BACKEND}:latest"
+${DOCKER_CMD} tag thermos-frontend:latest "${ECR_FRONTEND}:latest"
+${DOCKER_CMD} push "${ECR_BACKEND}:latest"
+${DOCKER_CMD} push "${ECR_FRONTEND}:latest"
 print_success "Images pushed to ECR"
 
 # =============================================================================
@@ -170,12 +224,6 @@ wait_for_rollout thermos-frontend
 rm -rf "$TMP_DIR"
 
 print_success "All manifests applied and rollouts complete"
-
-# =============================================================================
-# Active-stack marker (read by the optional CD workflow — see docs/16)
-# =============================================================================
-mkdir -p "${PROJECT_ROOT}/.thermos"
-echo "eks" > "${PROJECT_ROOT}/.thermos/active-stack"
 
 # =============================================================================
 # Step 6: Wait for LoadBalancer and verify accessibility
