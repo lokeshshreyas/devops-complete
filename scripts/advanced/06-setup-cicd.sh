@@ -219,6 +219,37 @@ if [ -z "$AWS_SESSION_TOKEN_VAL" ]; then
   print_warn "KodeKloud Playground you almost always have one. Double-check 'aws configure list'."
 fi
 
+ensure_pynacl() {
+  if python3 -c "import nacl.public" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  print_info "PyNaCl not installed; attempting to install it..."
+  if python3 -m pip install --user pynacl >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1 && python3 -m pip install pynacl >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1 && sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y python3-pynacl >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+if [ "$GH_CLI_AVAILABLE" -eq 0 ]; then
+  if ! ensure_pynacl; then
+    print_error "PyNaCl is not installed and could not be installed automatically."
+    print_info "Install it manually and rerun this script:"
+    print_info "  python3 -m pip install --user pynacl"
+    print_info "or"
+    print_info "  sudo apt-get install -y python3-pynacl"
+    unset GH_TOKEN AUTH_HEADER
+    exit 1
+  fi
+fi
+
+SECRETS_FAILED=0
 set_secret() {
   local name="$1"
   local value="$2"
@@ -229,13 +260,10 @@ set_secret() {
       print_success "Set secret: ${name} (via gh CLI)"
     else
       print_error "Failed to set secret ${name} via gh CLI"
+      SECRETS_FAILED=1
     fi
     return
   fi
-
-  # No gh CLI: encrypt with the repo's public key ourselves (libsodium sealed
-  # box, as required by the GitHub Secrets API) using Python + PyNaCl.
-  python3 -c "import nacl.public" >/dev/null 2>&1 || pip install pynacl -q --break-system-packages >/dev/null 2>&1
 
   local key_json key_id public_key
   key_json="$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
@@ -247,6 +275,7 @@ set_secret() {
     print_error "Could not fetch the repo's public key for ${name} - set it manually instead:"
     print_info "  GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret"
     print_info "  Name: ${name}"
+    SECRETS_FAILED=1
     return
   fi
 
@@ -265,6 +294,7 @@ PYEOF
     print_error "Encryption failed for ${name} (PyNaCl unavailable / no network to install it)."
     print_info "Set it manually: GitHub repo -> Settings -> Secrets and variables -> Actions"
     print_info "  Name: ${name}   Value: <paste from your terminal - do not commit it>"
+    SECRETS_FAILED=1
     return
   fi
 
@@ -278,6 +308,7 @@ PYEOF
     print_success "Set secret: ${name}"
   else
     print_error "Failed to set secret ${name} (HTTP ${http_code})"
+    SECRETS_FAILED=1
   fi
 }
 
@@ -295,6 +326,16 @@ unset GH_TOKEN AUTH_HEADER AWS_ACCESS_KEY_ID_VAL AWS_SECRET_ACCESS_KEY_VAL AWS_S
 print_header "STEP 4/4: CI/CD Is Live"
 
 print_success "Code pushed to https://github.com/${OWNER_REPO}"
+if [ "$SECRETS_FAILED" -ne 0 ]; then
+  print_error "Some GitHub Actions secrets were not registered successfully."
+  print_info "Check the output above for details and create the missing secrets manually if needed."
+  print_info "GitHub repo -> Settings -> Secrets and variables -> Actions"
+  print_info "  Name: AWS_ACCESS_KEY_ID"
+  print_info "  Name: AWS_SECRET_ACCESS_KEY"
+  print_info "  Name: AWS_SESSION_TOKEN"
+  print_info "  Name: AWS_REGION"
+  exit 1
+fi
 print_success "AWS credentials registered as Actions secrets"
 echo ""
 print_info "From now on, until your KodeKloud session expires:"
